@@ -1,0 +1,93 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model sudoku_original {
+  id               String             @id @default(uuid())
+  value            String
+  sudokuIncomplete sudoku_incomplete?
+
+  @@map("sudoku_original")
+}
+
+model sudoku_incomplete {
+  id         String          @id @default(uuid())
+  value      String
+  sudokuId   String          @unique @db.VarChar(250)
+  difficulty String?
+  level      Int?
+  sudoku     sudoku_original @relation(fields: [sudokuId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  gameScores GameScore[] // New relation to game scores
+  gameStates GameState[] // New relation to game states
+
+  @@map("sudoku_incomplete")
+}
+
+// Add relation from User to GameScore
+model User {
+  id            String      @id @default(uuid())
+  cognitoSub    String?     @unique // Cognito User ID
+  googleSub     String?     @unique // Google OAuth ID
+  email         String?     @unique
+  emailVerified Boolean     @default(false) // Email verification status
+  name          String?
+  picture       String?
+  gameScores    GameScore[] // Relation to game scores
+  gameState     GameState? // One active game state per user
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("users")
+}
+
+model GameScore {
+  id               String            @id @default(uuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sudokuId         String
+  sudoku           sudoku_incomplete @relation(fields: [sudokuId], references: [id], onDelete: Cascade)
+  timeTakenSeconds Int // Time in seconds to complete the sudoku
+  mistakesMade     Int               @default(0) // Number of incorrect entries before completion
+  hintsUsed        Int               @default(0) // Number of hints the user requested
+  isCompleted      Boolean           @default(false) // Whether the sudoku was successfully completed
+  score            Int? // Calculated score based on time, mistakes, and hints
+  completedAt      DateTime? // When the sudoku was completed, null if abandoned
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([sudokuId])
+  @@map("game_scores")
+}
+
+model GameState {
+  id               String            @id @default(uuid())
+  userId           String            @unique // One active game per user
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sudokuId         String
+  sudoku           sudoku_incomplete @relation(fields: [sudokuId], references: [id], onDelete: Cascade)
+  gridState        String // JSON string representing the current grid state
+  timeTakenSeconds Int               @default(0) // Time spent so far
+  mistakesMade     Int               @default(0) // Mistakes made so far
+  hintsUsed        Int               @default(0) // Hints used so far
+  currentLayer     Int               @default(1) // Current layer the user is on
+  isCompleted      Boolean           @default(false) // Whether the game is completed
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([sudokuId])
+  @@map("game_states")
+}
