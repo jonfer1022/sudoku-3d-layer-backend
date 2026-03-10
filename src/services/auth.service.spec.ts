@@ -32,6 +32,7 @@ describe('AuthService', () => {
   });
 
   afterEach(() => {
+    delete process.env.GOOGLE_OAUTH_ALLOWED_REDIRECTS;
     jest.restoreAllMocks();
   });
 
@@ -92,6 +93,7 @@ describe('AuthService', () => {
   });
 
   it('googleLogin returns Google auth URL when configured', () => {
+    process.env.GOOGLE_OAUTH_ALLOWED_REDIRECTS = 'scheme:sudoku3dlayer';
     const { service, configService } = makeService({
       configService: {
         get: jest.fn((key: string) => {
@@ -102,7 +104,7 @@ describe('AuthService', () => {
       },
     });
 
-    const url = service.googleLogin('sudoku://redirect');
+    const url = service.googleLogin('sudoku3dlayer://redirect');
     expect(url).toContain('accounts.google.com');
     expect(configService.get).toHaveBeenCalled();
   });
@@ -248,6 +250,7 @@ describe('AuthService', () => {
   });
 
   it('googleCallback returns redirect parts on success', async () => {
+    process.env.GOOGLE_OAUTH_ALLOWED_REDIRECTS = 'scheme:sudoku3dlayer';
     const { service, prisma, jwtService } = makeService({
       configService: {
         get: jest.fn((key: string) => {
@@ -272,12 +275,12 @@ describe('AuthService', () => {
 
     const res = await service.googleCallback(
       'code',
-      encodeURIComponent('my://redirect?x=1'),
+      encodeURIComponent('sudoku3dlayer://redirect?x=1'),
     );
     expect(res).toMatchObject({
       accessToken: 'access',
       refreshToken: 'refresh',
-      redirectTo: 'my://redirect?x=1',
+      redirectTo: 'sudoku3dlayer://redirect?x=1',
       separator: '&',
     });
   });

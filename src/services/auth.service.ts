@@ -5,6 +5,7 @@ import { OAuth2Client } from 'google-auth-library';
 import type { User } from 'generated/prisma/client';
 import { PrismaService } from 'src/repositories/prisma/prisma.service';
 import { CognitoService } from './cognito.service';
+import { isAllowedRedirectUrl } from 'src/common/auth/redirect-allowlist';
 import { AppErrorCode } from 'src/common/errors/app-error-code';
 import {
   appBadRequest,
@@ -24,6 +25,18 @@ export class AuthService {
   ) {}
 
   googleLogin(redirectUri: string) {
+    if (!redirectUri) {
+      throw appBadRequest(AppErrorCode.BadRequest, 'Missing redirect_uri');
+    }
+    const allowed = isAllowedRedirectUrl(redirectUri, {
+      allowedListEnv: process.env.GOOGLE_OAUTH_ALLOWED_REDIRECTS,
+      // Default allow your Expo scheme if not configured.
+      fallbackScheme: 'sudoku3dlayer',
+    });
+    if (!allowed) {
+      throw appBadRequest(AppErrorCode.BadRequest, 'Invalid redirect_uri');
+    }
+
     const state = encodeURIComponent(redirectUri ?? '');
     const clientId = this.configService.get<string>('GOOGLE_OAUTH_CLIENT_ID');
     const callbackUrl = this.configService.get<string>(
@@ -198,8 +211,17 @@ export class AuthService {
         { expiresIn: '7d', algorithm: 'HS256' },
       );
 
-      const redirectTo = state
+      const redirectToCandidate = state
         ? decodeURIComponent(state)
+        : (process.env.FRONTEND_URL ?? 'http://localhost:8081');
+
+      const redirectAllowed = isAllowedRedirectUrl(redirectToCandidate, {
+        allowedListEnv: process.env.GOOGLE_OAUTH_ALLOWED_REDIRECTS,
+        fallbackScheme: 'sudoku3dlayer',
+      });
+
+      const redirectTo = redirectAllowed
+        ? redirectToCandidate
         : (process.env.FRONTEND_URL ?? 'http://localhost:8081');
       const separator = redirectTo.includes('?') ? '&' : '?';
 
@@ -221,35 +243,43 @@ export class AuthService {
    * Cognito will send OTP to user's email for verification
    */
   async register(email: string, password: string, name?: string) {
-    if (!email || !password) {
-      throw appBadRequest(
-        AppErrorCode.BadRequest,
-        'Email and password are required',
-      );
+    try {
+      if (!email || !password) {
+        throw appBadRequest(
+          AppErrorCode.BadRequest,
+          'Email and password are required',
+        );
+      }
+
+      // Check if user already exists in our DB
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email },
+      });
+
+      if (existingUser) {
+        throw appConflict(
+          AppErrorCode.EmailAlreadyRegistered,
+          'Email already registered',
+        );
+      }
+
+      // Sign up with Cognito
+      const result = await this.cognitoService.signUp(email, password, name);
+
+      return {
+        status: 'ok',
+        message:
+          'Sign up successful. Please check your email to confirm the OTP code.',
+        userSub: result.userSub,
+        email: result.email,
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      console.error('Registration error', error);
+      throw appInternal(AppErrorCode.Internal, 'Registration failed');
     }
-
-    // Check if user already exists in our DB
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      throw appConflict(
-        AppErrorCode.EmailAlreadyRegistered,
-        'Email already registered',
-      );
-    }
-
-    // Sign up with Cognito
-    const result = await this.cognitoService.signUp(email, password, name);
-
-    return {
-      status: 'ok',
-      message:
-        'Sign up successful. Please check your email to confirm the OTP code.',
-      userSub: result.userSub,
-      email: result.email,
-    };
   }
 
   /**
@@ -444,5 +474,31 @@ export class AuthService {
       token: newAccessToken,
       refreshToken: newRefreshToken,
     };
+  }
+
+  /**
+   * Best-effort sign out.
+   *
+   * Note: Our API tokens are JWTs; we cannot revoke them server-side without
+   * adding token blacklisting. This endpoint exists to also invalidate the
+   * Cognito session when possible.
+   */
+  logout(user: { sub?: string } | undefined) {
+    try {
+      if (!user?.sub) {
+        throw appUnauthorized(
+          AppErrorCode.Unauthorized,
+          'User not authenticated',
+        );
+      }
+
+      // If you later store Cognito AccessTokens per user, you can call
+      // cognitoService.signOut(accessToken) here.
+      return { status: 'ok' };
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      console.error('Logout error', err);
+      throw appInternal(AppErrorCode.Internal, 'Logout failed');
+    }
   }
 }

@@ -13,6 +13,7 @@ import { Public } from './decorators/public.decorator';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuthService } from 'src/services';
+import type { RequestAuth } from 'src/common/types';
 
 @Controller('auth')
 export class AuthController {
@@ -134,5 +135,16 @@ export class AuthController {
   @Post('refresh')
   async refresh(@Body('refreshToken') refreshToken: string) {
     return this.authService.refreshAccessToken(refreshToken);
+  }
+
+  /**
+   * Sign out user (best-effort).
+   *
+   * The app can call this to invalidate the Cognito session. We still clear
+   * local tokens client-side regardless of backend outcome.
+   */
+  @Post('logout')
+  logout(@Request() req: RequestAuth) {
+    return this.authService.logout(req?.user);
   }
 }
